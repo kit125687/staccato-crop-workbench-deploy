@@ -113,6 +113,58 @@ def public_ai_config() -> dict:
     return {"enabled": AI_CONFIG["enabled"], "provider": AI_CONFIG["provider"], "base_url": AI_CONFIG["base_url"], "model": AI_CONFIG["model"], "configured": bool(AI_CONFIG["api_key"])}
 
 
+def analyze_product_image(image: Image.Image) -> dict | None:
+    """Classify product imagery and locate the actual shoe with Gemini vision."""
+    if (
+        not AI_CONFIG["enabled"]
+        or AI_CONFIG["provider"] != "gemini"
+        or not AI_CONFIG["api_key"]
+        or os.getenv("IMAGE_AI_CLASSIFICATION", "false").lower() != "true"
+    ):
+        return None
+    sample = image.copy().convert("RGB")
+    sample.thumbnail((768, 768), Image.Resampling.LANCZOS)
+    stream = io.BytesIO()
+    sample.save(stream, "JPEG", quality=88)
+    prompt = (
+        "你是鞋类电商切图质检模型。只输出JSON。按可见人体结构分类："
+        "静物=只有鞋子且没有真实人物腿脚或身体；"
+        "腿模=真人正在穿鞋或出现脚、小腿、大腿，但可见身体没有达到胸部；"
+        "全身=有明确真人动作/姿态且可见躯体达到胸部、肩、颈或头部，头部可缺失。"
+        "马、道具、产品局部、鞋子细节绝不能当成人体。"
+        "同时给出画面中所有鞋子的合并外接框 shoe_box，坐标为原图归一化0到1000的[x,y,width,height]；"
+        "腿模的主体仅指鞋子，不把腿算入shoe_box。全身图另给person_box。"
+        "JSON字段：image_type(静物/腿模/全身), confidence(0到1), reason, "
+        "shoe_box(四整数), person_box(四整数或null), visible_body_parts(字符串数组)。"
+    )
+    payload = {
+        "contents": [{"parts": [
+            {"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(stream.getvalue()).decode()}},
+            {"text": prompt},
+        ]}],
+        "generationConfig": {"responseMimeType": "application/json", "temperature": 0.0},
+    }
+    model = os.getenv("IMAGE_ANALYSIS_MODEL", "gemini-2.5-flash")
+    endpoint = f'{AI_CONFIG["base_url"].rstrip("/")}/models/{model}:generateContent'
+    request = urllib.request.Request(
+        endpoint,
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json", "x-goog-api-key": AI_CONFIG["api_key"]},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            result = json.loads(response.read())
+        text = result["candidates"][0]["content"]["parts"][0]["text"]
+        text = text.strip().removeprefix("```json").removesuffix("```").strip()
+        parsed = json.loads(text)
+        if parsed.get("image_type") not in {"静物", "腿模", "全身"}:
+            return None
+        return parsed
+    except Exception:
+        return None
+
+
 def _validate_protected_pixels(
     generated: Image.Image,
     request_image: Image.Image,

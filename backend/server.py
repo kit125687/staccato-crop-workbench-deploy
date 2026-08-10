@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
-from .core import ImageItem, assign_barcodes, export_items, render_output, scan_root
+from .core import OUTPUT_SIZES, ImageItem, assign_barcodes, export_items, output_layout, render_output, scan_root
 
 NO_AI_MODE = os.getenv("NO_AI_MODE", "false").lower() == "true"
 PUBLIC_CLOUD = os.getenv("PUBLIC_CLOUD", "false").lower() == "true"
@@ -222,7 +222,6 @@ def update_crop(image_id: str, request: CropRequest):
     if not item:
         raise HTTPException(404, "图片不存在")
     item.crop = {"offset_x": max(-1400, min(1400, request.offset_x)), "offset_y": max(-1600, min(1600, request.offset_y)), "zoom": max(35, min(240, request.zoom))}
-    PREVIEW_CACHE.clear()
     return item.public()
 
 
@@ -290,6 +289,17 @@ def preview(image_id: str, barcode: Optional[str] = None, size: int = 720, compl
         PREVIEW_CACHE.clear()
     PREVIEW_CACHE[key] = payload
     return Response(payload, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=3600"})
+
+
+@app.get("/api/images/{image_id}/layout")
+def preview_layout(image_id: str, barcode: Optional[str] = None):
+    item = IMAGE_INDEX.get(image_id)
+    if not item:
+        raise HTTPException(404, "图片不存在")
+    selected = barcode or (item.barcodes[0] if item.barcodes else "43")
+    if selected not in OUTPUT_SIZES:
+        raise HTTPException(400, "无效输出编号")
+    return output_layout(item, selected)
 
 
 @app.post("/api/jobs/{job_id}/process")

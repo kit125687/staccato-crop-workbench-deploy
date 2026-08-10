@@ -10,6 +10,12 @@ services:
         value: "true"
       - key: EXPORT_WORKERS
         value: "1"
+      - key: SCAN_WORKERS
+        value: "2"
+      - key: IMAGE_AI_CLASSIFICATION
+        value: "true"
+      - key: IMAGE_ANALYSIS_MODEL
+        value: gemini-2.5-flash
       - key: IMAGE_AI_ENABLED
         value: "true"
       - key: IMAGE_AI_PROVIDER

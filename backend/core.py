@@ -174,6 +174,23 @@ def _shoe_subject_box(frame: Box, image: Image.Image, image_type: str) -> Box:
     return Box(frame.x, y1, frame.w, max(1, y2 - y1))
 
 
+def _normalized_box(value: object, image: Image.Image) -> Box | None:
+    if not isinstance(value, list) or len(value) != 4:
+        return None
+    try:
+        x, y, w, h = [max(0, min(1000, int(number))) for number in value]
+    except (TypeError, ValueError):
+        return None
+    if w < 15 or h < 15:
+        return None
+    x2, y2 = min(1000, x + w), min(1000, y + h)
+    return Box(
+        round(x * image.width / 1000), round(y * image.height / 1000),
+        max(1, round((x2 - x) * image.width / 1000)),
+        max(1, round((y2 - y) * image.height / 1000)),
+    )
+
+
 def analyze_image(path: Path, folder: str) -> ImageItem:
     with Image.open(path) as raw:
         image = ImageOps.exif_transpose(raw).convert("RGB")
@@ -204,6 +221,16 @@ def analyze_image(path: Path, folder: str) -> ImageItem:
             image_type = "静物"
             confidence = min(.97, .80 + subject_score * .16)
             reason = "未检测到人体关键点或连续腿部结构，按纯鞋静物处理"
+        ai_result = None
+        try:
+            from .outpaint import analyze_product_image
+            ai_result = analyze_product_image(image)
+        except Exception:
+            ai_result = None
+        if ai_result:
+            image_type = ai_result["image_type"]
+            confidence = max(.0, min(.99, float(ai_result.get("confidence", .86))))
+            reason = f'AI视觉识别：{ai_result.get("reason", "已按可见人体结构判断")}'
         review_reasons = []
         if len(keypoints) >= 3 and not upper_body and image_type == "静物":
             review_reasons.append("检测到零散人体关键点，需确认是否为产品细节误识别")
@@ -218,7 +245,12 @@ def analyze_image(path: Path, folder: str) -> ImageItem:
         # backgrounds must use coherent AI outpainting instead of a visible fill.
         if touches_edge and background != "solid":
             background = "complex"
-        box = _shoe_subject_box(frame_box, image, image_type)
+        ai_shoe_box = _normalized_box(ai_result.get("shoe_box"), image) if ai_result else None
+        ai_person_box = _normalized_box(ai_result.get("person_box"), image) if ai_result else None
+        if image_type == "全身":
+            box = ai_person_box or frame_box
+        else:
+            box = ai_shoe_box or _shoe_subject_box(frame_box, image, image_type)
         return ImageItem(
             id=uuid.uuid4().hex[:12], folder=folder, path=str(path), filename=path.name,
             width=image.width, height=image.height, image_type=image_type,
@@ -245,7 +277,7 @@ def scan_root(root: str) -> tuple[list[ImageItem], list[str]]:
         files = sorted((p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS and not is_generated_output(p, folder.name)), key=lambda p: p.name.lower())
         for path in files:
             work.append((path, folder.name))
-    configured_workers = max(1, int(os.getenv("EXPORT_WORKERS", "3")))
+    configured_workers = max(1, int(os.getenv("SCAN_WORKERS", "3")))
     with ThreadPoolExecutor(max_workers=min(configured_workers, max(1, len(work)))) as pool:
         futures = [pool.submit(analyze_image, path, folder) for path, folder in work]
         for (path, folder), future in zip(work, futures):
@@ -327,6 +359,39 @@ def _scaled_zone(image_type: str, original_target: tuple[int, int], target: tupl
     zone = safe_zone(image_type, original_target)
     sx, sy = target[0] / original_target[0], target[1] / original_target[1]
     return Box(round(zone.x * sx), round(zone.y * sy), round(zone.w * sx), round(zone.h * sy))
+
+
+def output_layout(item: ImageItem, barcode: str) -> dict:
+    """Return the detected subject position in the rendered output canvas."""
+    target = tuple(item.output_sizes.get(barcode, OUTPUT_SIZES[barcode]))
+    zone = safe_zone(item.image_type, target)
+    box = item.subject_box
+    zoom = item.crop.get("zoom", 100) / 100
+    scale = min(zone.w / max(1, box.w), zone.h / max(1, box.h)) * zoom
+    subject_cx = (box.x + box.w / 2) * scale
+    subject_cy = (box.y + box.h / 2) * scale
+    paste_x = round(zone.x + zone.w / 2 + item.crop.get("offset_x", 0) - subject_cx)
+    paste_y = round(zone.y + zone.h / 2 + item.crop.get("offset_y", 0) - subject_cy)
+    detail_like = item.image_type == "静物" and (box.w * box.h) / max(1, item.width * item.height) >= .88
+    if detail_like:
+        scale = max(target[0] / item.width, target[1] / item.height) * zoom
+        paste_x = round((target[0] - item.width * scale) / 2 + item.crop.get("offset_x", 0))
+        paste_y = round((target[1] - item.height * scale) / 2 + item.crop.get("offset_y", 0))
+    elif item.image_type == "腿模":
+        preferred = round(target[1] * .025)
+        min_y = round(zone.y - box.y * scale)
+        max_y = round(zone.y2 - (box.y + box.h) * scale)
+        paste_y = round((min_y + max_y) / 2) if max_y < min_y else max(min_y, min(preferred, max_y))
+        paste_y += item.crop.get("offset_y", 0)
+    elif item.image_type == "全身":
+        scale = min(target[0] * .84 / item.width, target[1] * .90 / item.height) * zoom
+        paste_x = round((target[0] - item.width * scale) / 2 + item.crop.get("offset_x", 0))
+        paste_y = round(target[1] * .05 + item.crop.get("offset_y", 0))
+    subject = Box(
+        round(paste_x + box.x * scale), round(paste_y + box.y * scale),
+        max(1, round(box.w * scale)), max(1, round(box.h * scale)),
+    )
+    return {"target": list(target), "subject_box": asdict(subject), "safe_zone": asdict(zone)}
 
 
 def render_output(item: ImageItem, barcode: str, allow_complex_fallback: bool = False, preview_max: Optional[int] = None, force_unextended: bool = False, completion_mode: str = "ai") -> tuple[Image.Image, str]:
