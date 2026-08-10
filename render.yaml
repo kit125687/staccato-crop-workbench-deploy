@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: staccato-crop-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    envVars:
+      - key: PUBLIC_CLOUD
+        value: "true"
+      - key: IMAGE_AI_ENABLED
+        value: "true"
+      - key: IMAGE_AI_PROVIDER
+        value: gemini
+      - key: OPENAI_BASE_URL
+        value: https://generativelanguage.googleapis.com/v1beta
+      - key: IMAGE_AI_MODEL
+        value: gemini-3-pro-image
+      - key: OPENAI_API_KEY
+        sync: false

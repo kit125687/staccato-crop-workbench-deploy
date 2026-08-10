@@ -1,0 +1,20 @@
+node_modules/
+dist/
+.pnpm-store/
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+*.log
+*.zip
+*.plist
+.env
+.env.local
+.env.*.local
+dws-recovery-*.json
+releases/
+dist-no-ai/
+universal-image-edit-workbench/
+
+# Local Netlify folder
+.netlify

@@ -1,0 +1,29 @@
+{
+  "name": "staccato-crop-workbench",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "dev:no-ai": "vite --host 127.0.0.1 --mode no-ai",
+    "api": ".venv/bin/python -m uvicorn backend.server:app --host 127.0.0.1 --port 8000",
+    "api:secure": "node scripts/start-local-api.mjs",
+    "api:no-ai": "node scripts/start-no-ai-api.mjs",
+    "api:unified": "node scripts/start-unified-api.mjs",
+    "dev:unified": "vite --host 127.0.0.1 --mode no-ai",
+    "build": "vite build",
+    "build:no-ai": "vite build --mode no-ai --outDir dist-no-ai",
+    "preview:no-ai": "vite preview --host 127.0.0.1 --outDir dist-no-ai",
+    "preview": "vite preview --host 127.0.0.1"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "latest",
+    "lucide-react": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "vite": "latest"
+  },
+  "devDependencies": {
+    "netlify-cli": "^27.1.0"
+  }
+}

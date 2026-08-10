@@ -1,0 +1,13 @@
+.git
+.venv
+node_modules
+dist
+dist-no-ai
+public
+releases
+docs
+universal-image-edit-workbench
+*.zip
+*.log
+*.plist
+backend/tests
