@@ -8,6 +8,8 @@ services:
     envVars:
       - key: PUBLIC_CLOUD
         value: "true"
+      - key: EXPORT_WORKERS
+        value: "1"
       - key: IMAGE_AI_ENABLED
         value: "true"
       - key: IMAGE_AI_PROVIDER

@@ -245,7 +245,8 @@ def scan_root(root: str) -> tuple[list[ImageItem], list[str]]:
         files = sorted((p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS and not is_generated_output(p, folder.name)), key=lambda p: p.name.lower())
         for path in files:
             work.append((path, folder.name))
-    with ThreadPoolExecutor(max_workers=min(3, max(1, len(work)))) as pool:
+    configured_workers = max(1, int(os.getenv("EXPORT_WORKERS", "3")))
+    with ThreadPoolExecutor(max_workers=min(configured_workers, max(1, len(work)))) as pool:
         futures = [pool.submit(analyze_image, path, folder) for path, folder in work]
         for (path, folder), future in zip(work, futures):
             try:
@@ -468,7 +469,8 @@ def export_items(items: Iterable[ImageItem], quality: int = 95, completion_mode:
     exported, failed = [], []
     # Image generation and JPEG encoding are independent per output. A small
     # worker pool improves batch speed without flooding paid model endpoints.
-    with ThreadPoolExecutor(max_workers=min(3, max(1, len(tasks)))) as pool:
+    configured_workers = max(1, int(os.getenv("EXPORT_WORKERS", "3")))
+    with ThreadPoolExecutor(max_workers=min(configured_workers, max(1, len(tasks)))) as pool:
         futures = [pool.submit(_export_one, item, barcode, completion_mode) for item, barcode in tasks]
         for future in futures:
             success, error = future.result()
