@@ -20,10 +20,39 @@ function apiUrl(path) {
 
 async function api(path, options = {}) {
   const multipart = options.body instanceof FormData;
-  const response = await fetch(apiUrl(path), { headers: { ...(multipart ? {} : { 'Content-Type': 'application/json' }), ...(options.headers || {}) }, ...options });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.detail || payload.error || '请求失败');
-  return payload;
+  const retries = options.retries ?? 0;
+  const timeout = options.timeout ?? 120000;
+  const requestOptions = { ...options };
+  delete requestOptions.retries;
+  delete requestOptions.timeout;
+  let lastError;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeout);
+    try {
+      const response = await fetch(apiUrl(path), {
+        headers: { ...(multipart ? {} : { 'Content-Type': 'application/json' }), ...(options.headers || {}) },
+        ...requestOptions,
+        signal: controller.signal,
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const error = new Error(payload.detail || payload.error || `云端请求失败（HTTP ${response.status}）`);
+        error.retryable = [429, 502, 503, 504].includes(response.status);
+        throw error;
+      }
+      return payload;
+    } catch (error) {
+      lastError = error;
+      const retryable = error.name === 'AbortError' || error instanceof TypeError || error.retryable;
+      if (!retryable || attempt >= retries) break;
+      await new Promise(resolve => setTimeout(resolve, Math.min(1000 * (2 ** attempt), 8000)));
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  if (lastError?.name === 'AbortError') throw new Error('云端服务响应超时，请稍后重试');
+  throw lastError;
 }
 
 export default function App() {
@@ -53,7 +82,23 @@ export default function App() {
   const folderInput = useRef(null);
   const noAiMode = completionMode === 'blank';
 
-  useEffect(() => { api('/api/health').then(setHealth).catch(() => setHealth({ ok: false, ai_configured: false })); }, []);
+  useEffect(() => {
+    let live = true;
+    let refreshTimer;
+    const checkHealth = async () => {
+      if (live) setHealth(old => old?.ok ? old : { ...old, checking: true });
+      try {
+        const next = await api('/api/health', { retries: 5, timeout: 30000 });
+        if (live) setHealth({ ...next, checking: false });
+      } catch (error) {
+        if (live) setHealth({ ok: false, checking: false, ai_configured: false, error: error.message });
+      } finally {
+        if (live) refreshTimer = setTimeout(checkHealth, 30000);
+      }
+    };
+    checkHealth();
+    return () => { live = false; clearTimeout(refreshTimer); };
+  }, []);
   useEffect(() => { localStorage.setItem('completionMode', completionMode); setResult(null); }, [completionMode]);
   const folders = useMemo(() => job ? [...new Set(job.items.map(item => item.folder))] : [], [job]);
   useEffect(() => { if (folders.length && !folders.includes(activeFolder)) setActiveFolder(folders[0]); }, [folders, activeFolder]);
@@ -101,10 +146,13 @@ export default function App() {
     try {
       const form = new FormData();
       selected.forEach(file => { form.append('files', file, file.name); form.append('paths', file.webkitRelativePath || file.name); });
-      const next = await api('/api/cloud/jobs/scan', { method: 'POST', body: form });
+      // Render 免费实例可能处于休眠状态；上传前先唤醒，上传请求本身也自动重试一次。
+      await api('/api/health', { retries: 5, timeout: 30000 });
+      setHealth(old => ({ ...old, ok: true, checking: false }));
+      const next = await api('/api/cloud/jobs/scan', { method: 'POST', body: form, retries: 1, timeout: 180000 });
       setRoot(selected[0].webkitRelativePath?.split('/')[0] || '已选商品文件夹');
       setJob(next); setActiveFolder(next.items[0]?.folder || ''); setActiveId(next.items[0]?.id || null);
-    } catch (err) { setError(err.message.includes('fetch') ? '云端图像服务暂时不可用，请稍后重试。' : err.message); }
+    } catch (err) { setError(`云端处理未完成：${err.message || '网络连接失败'}。系统会继续自动检测服务，可直接再次选择文件夹。`); }
     finally { setBusy(''); event.target.value = ''; }
   };
   const refreshJob = next => { setJob(next); if (!next.items.some(i => i.id === activeId)) setActiveId(next.items[0]?.id); };
@@ -169,7 +217,7 @@ export default function App() {
       <div className="brand"><strong>CUT<span>/</span>规</strong><i/><b>规范切图工作台</b></div>
       <div className="path-input"><FolderOpen size={17}/><input aria-label="根目录路径" value={root} onChange={e => !PUBLIC_MODE && setRoot(e.target.value)} readOnly={PUBLIC_MODE}/><button onClick={PUBLIC_MODE ? selectCloudFolder : scan} disabled={!!busy}>{busy || (PUBLIC_MODE ? '选择文件夹' : '读取根目录')}</button><input ref={folderInput} className="hidden-folder-input" type="file" accept="image/jpeg,image/png" multiple webkitdirectory="" directory="" onChange={uploadCloudFolder}/></div>
       <div className="completion-switch" role="group" aria-label="扩图模式"><button className={!noAiMode ? 'active' : ''} onClick={() => setCompletionMode('ai')}><Sparkles size={14}/>AI扩图</button><button className={noAiMode ? 'active' : ''} onClick={() => setCompletionMode('blank')}><Crop size={14}/>无AI留白</button></div>
-      <span className={`service ${health?.ok ? 'online' : ''}`}><i/>{health?.ok ? (noAiMode ? '图像服务在线 · 不调用AI' : `图像服务在线 · AI${health.ai_configured ? '已配置' : '未配置'}`) : '图像服务未启动'}</span>
+      <span className={`service ${health?.ok ? 'online' : ''}`}><i/>{health?.checking ? '正在连接云端服务…' : health?.ok ? (noAiMode ? '图像服务在线 · 不调用AI' : `图像服务在线 · AI${health.ai_configured ? '已配置' : '未配置'}`) : '云端服务正在自动重连'}</span>
       {!noAiMode && <button className="settings-button" onClick={openAiSettings} aria-label="AI 设置"><Settings size={17}/></button>}
     </header>
 
