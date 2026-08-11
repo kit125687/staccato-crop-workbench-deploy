@@ -12,6 +12,7 @@ from typing import Optional
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .core import OUTPUT_SIZES, ImageItem, assign_barcodes, export_items, output_layout, render_output, scan_root
@@ -343,3 +344,11 @@ def download_cloud_export(job_id: str):
     if not job or not job.get("cloud") or not archive.exists():
         raise HTTPException(404, "导出压缩包不存在或已过期")
     return FileResponse(archive, media_type="application/zip", filename=f"staccato-crops-{job_id}.zip")
+
+
+# The public cloud build serves the React workbench and API from one Render
+# service. API routes remain above this mount, while the root URL becomes the
+# shareable application URL and no longer depends on Netlify deployment quota.
+FRONTEND_DIST = Path(os.getenv("FRONTEND_DIST", "/app/dist"))
+if FRONTEND_DIST.exists():
+    app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="workbench")
