@@ -151,8 +151,9 @@ def _vision_body_pose(path: Path) -> list[dict]:
 
 
 def _mediapipe_body_pose(image: Image.Image) -> list[dict]:
-    """Detect real human pose landmarks on Linux without an external API."""
-    model_path = Path(os.getenv("POSE_MODEL_PATH", "/app/backend/models/pose_landmarker_lite.task"))
+    """Detect real human pose landmarks locally without an external API."""
+    bundled_model = Path(__file__).resolve().parent / "models" / "pose_landmarker_lite.task"
+    model_path = Path(os.getenv("POSE_MODEL_PATH", str(bundled_model)))
     if not model_path.is_file():
         return []
     try:

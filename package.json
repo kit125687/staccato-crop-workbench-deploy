@@ -12,6 +12,7 @@
     "api:unified": "node scripts/start-unified-api.mjs",
     "dev:unified": "vite --host 127.0.0.1 --mode no-ai",
     "build": "vite build",
+    "build:local": "vite build --mode localtool --outDir dist-local",
     "build:no-ai": "vite build --mode no-ai --outDir dist-no-ai",
     "preview:no-ai": "vite preview --host 127.0.0.1 --outDir dist-no-ai",
     "preview": "vite preview --host 127.0.0.1"

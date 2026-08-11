@@ -3,6 +3,7 @@ uvicorn[standard]>=0.30
 Pillow>=11.0
 numpy>=1.26
 mediapipe==0.10.35; sys_platform == "linux"
+mediapipe==0.10.21; sys_platform == "win32"
 pyobjc-core==10.3.2; sys_platform == "darwin"
 pyobjc-framework-Cocoa==10.3.2; sys_platform == "darwin"
 pyobjc-framework-Quartz==10.3.2; sys_platform == "darwin"

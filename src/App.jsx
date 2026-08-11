@@ -132,11 +132,18 @@ export default function App() {
     return () => { live = false; };
   }, [active?.id, previewBarcode, active?.crop.offset_x, active?.crop.offset_y, active?.crop.zoom, active?.image_type]);
 
-  const scan = async () => {
+  const scan = async (selectedRoot = root) => {
     setBusy('正在扫描与识别…'); setError(''); setResult(null);
-    try { const next = await api('/api/jobs/scan', { method: 'POST', body: JSON.stringify({ root }) }); setJob(next); setActiveFolder(next.items[0]?.folder || ''); setActiveId(next.items[0]?.id || null); }
+    try { const next = await api('/api/jobs/scan', { method: 'POST', body: JSON.stringify({ root: selectedRoot }) }); setRoot(selectedRoot); setJob(next); setActiveFolder(next.items[0]?.folder || ''); setActiveId(next.items[0]?.id || null); }
     catch (err) { setError(err.message.includes('fetch') ? '无法连接本地图像服务，请先运行后端启动命令。' : err.message); }
     finally { setBusy(''); }
+  };
+  const selectLocalFolder = async () => {
+    setError('');
+    try {
+      const selected = await api('/api/system/select-folder');
+      if (selected.path) await scan(selected.path);
+    } catch (err) { setError(err.message); }
   };
   const selectCloudFolder = () => folderInput.current?.click();
   const uploadCloudFolder = async event => {
@@ -215,7 +222,7 @@ export default function App() {
   return <div className="app">
     <header className="topbar">
       <div className="brand"><strong>CUT<span>/</span>规</strong><i/><b>规范切图工作台</b></div>
-      <div className="path-input"><FolderOpen size={17}/><input aria-label="根目录路径" value={root} onChange={e => !PUBLIC_MODE && setRoot(e.target.value)} readOnly={PUBLIC_MODE}/><button onClick={PUBLIC_MODE ? selectCloudFolder : scan} disabled={!!busy}>{busy || (PUBLIC_MODE ? '选择文件夹' : '读取根目录')}</button><input ref={folderInput} className="hidden-folder-input" type="file" accept="image/jpeg,image/png" multiple webkitdirectory="" directory="" onChange={uploadCloudFolder}/></div>
+      <div className="path-input"><FolderOpen size={17}/><input aria-label="根目录路径" value={root} onChange={e => !PUBLIC_MODE && setRoot(e.target.value)} readOnly={PUBLIC_MODE}/><button onClick={PUBLIC_MODE ? selectCloudFolder : selectLocalFolder} disabled={!!busy}>{busy || '选择文件夹'}</button><input ref={folderInput} className="hidden-folder-input" type="file" accept="image/jpeg,image/png" multiple webkitdirectory="" directory="" onChange={uploadCloudFolder}/></div>
       <div className="completion-switch" role="group" aria-label="扩图模式"><button className={!noAiMode ? 'active' : ''} onClick={() => setCompletionMode('ai')}><Sparkles size={14}/>AI扩图</button><button className={noAiMode ? 'active' : ''} onClick={() => setCompletionMode('blank')}><Crop size={14}/>无AI留白</button></div>
       <span className={`service ${health?.ok ? 'online' : ''}`}><i/>{health?.checking ? '正在连接云端服务…' : health?.ok ? (noAiMode ? '图像服务在线 · 不调用AI' : `图像服务在线 · AI${health.ai_configured ? '已配置' : '未配置'}`) : '云端服务正在自动重连'}</span>
       {!noAiMode && <button className="settings-button" onClick={openAiSettings} aria-label="AI 设置"><Settings size={17}/></button>}
@@ -232,7 +239,7 @@ export default function App() {
     </aside>
 
     <main className="workspace">
-      {!job && <section className="empty-state"><div className="empty-mark"><Crop size={38}/></div><h1>{PUBLIC_MODE ? '选择商品文件夹，联机完成整批切图' : '选择根目录，自动完成整批切图'}</h1><p>系统会按商品文件夹扫描、识别图片类型、定位主体并分配输出名称。仅异常图片需要人工复核。</p><button onClick={PUBLIC_MODE ? selectCloudFolder : scan} disabled={!!busy}><Play size={17}/>{busy || (PUBLIC_MODE ? '选择文件夹并上传' : '开始自动处理')}</button><small>支持 JPG、JPEG、PNG · 原始图片不会被修改</small>{error && <div className="error"><AlertTriangle size={15}/>{error}</div>}</section>}
+      {!job && <section className="empty-state"><div className="empty-mark"><Crop size={38}/></div><h1>{PUBLIC_MODE ? '选择商品文件夹，联机完成整批切图' : '选择根目录，自动完成整批切图'}</h1><p>系统会按商品文件夹扫描、识别图片类型、定位主体并分配输出名称。仅异常图片需要人工复核。</p><button onClick={PUBLIC_MODE ? selectCloudFolder : selectLocalFolder} disabled={!!busy}><Play size={17}/>{busy || (PUBLIC_MODE ? '选择文件夹并上传' : '选择文件夹并自动处理')}</button><small>支持 JPG、JPEG、PNG · 原始图片不会被修改</small>{error && <div className="error"><AlertTriangle size={15}/>{error}</div>}</section>}
       {job && active && <>
         <div className="toolbar"><div><button onClick={() => updateCrop({ offset_x: 0, offset_y: 0, zoom: 100 })}><Maximize size={16}/>适应画布</button><button onClick={() => updateCrop({ ...draftCrop, offset_x: 0, offset_y: 0 })}><Crop size={16}/>主体居中</button><button onClick={() => updateCrop({ offset_x: 0, offset_y: 0, zoom: 100 })}><Undo2 size={16}/>重置</button></div><span>{active.filename}</span><div className="ratio"><button className={isSquare ? 'active' : ''}>1:1</button><button className={!isSquare ? 'active' : ''}>{targetPixels[0]}:{targetPixels[1]}</button></div></div>
         <section className="stage"><div className="canvas interactive" style={{aspectRatio:`${targetPixels[0]} / ${targetPixels[1]}`}} onPointerDown={startCanvasDrag} onPointerMove={moveCanvasDrag} onPointerUp={endCanvasDrag} onPointerCancel={endCanvasDrag} onWheel={wheelCanvas}><div className="canvas-media" style={{transform:visualTransform}}><img draggable="false" src={`${apiUrl(active.preview_url)}?barcode=${previewBarcode || '43'}&size=680&completion_mode=${completionMode}&v=${active.crop.zoom}-${active.crop.offset_x}-${active.crop.offset_y}-${target}`}/>{subjectStyle && <div className="subject-box" style={subjectStyle}><span>{active.image_type === '全身' ? '人物主体' : '鞋子主体'}</span></div>}</div>{active.image_type !== '全身' && <div className={`safe-zone ${isSquare ? 'safe-square' : ''}`}><span>鞋子主体规范区 · {safe}</span></div>}</div><div className="canvas-meta"><span>输出画布 {target}</span><span>{active.image_type === '腿模' ? '腿模靠顶 · 鞋子完整' : active.image_type === '全身' ? '人物躯体完整自适应' : `规范区 ${safe}`}</span><span>{detailLike ? '完整画布：产品细节铺满' : noAiMode ? '完整画布：不足区域留白' : '完整画布：不足时 AI 整图扩展'}</span></div></section>

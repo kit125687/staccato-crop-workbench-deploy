@@ -22,9 +22,43 @@ KEYCHAIN_SERVICE = "com.staccato.crop-workbench.api-key"
 KEYCHAIN_CONFIG_SERVICE = "com.staccato.crop-workbench.ai-config"
 
 
+def _local_config_path():
+    if sys.platform == "darwin":
+        return None
+    base = os.getenv("APPDATA") if sys.platform == "win32" else os.getenv("XDG_CONFIG_HOME")
+    folder = os.path.join(base or os.path.expanduser("~/.config"), "StaccatoCropWorkbench")
+    return os.path.join(folder, "ai-config.json")
+
+
+def _file_config() -> dict:
+    path = _local_config_path()
+    if not path:
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except Exception:
+        return {}
+
+
+def _save_file_config(config: dict) -> None:
+    path = _local_config_path()
+    if not path:
+        return
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    temporary = f"{path}.tmp"
+    with open(temporary, "w", encoding="utf-8") as handle:
+        json.dump(config, handle, ensure_ascii=False)
+    try:
+        os.chmod(temporary, 0o600)
+    except OSError:
+        pass
+    os.replace(temporary, path)
+
+
 def _keychain_key(provider: str) -> str:
     if sys.platform != "darwin":
-        return ""
+        return str(_file_config().get("keys", {}).get(provider, ""))
     try:
         return subprocess.run(
             ["security", "find-generic-password", "-s", f"{KEYCHAIN_SERVICE}.{provider}", "-w"],
@@ -36,6 +70,9 @@ def _keychain_key(provider: str) -> str:
 
 def _save_keychain_key(provider: str, api_key: str) -> None:
     if sys.platform != "darwin":
+        config = _file_config()
+        config.setdefault("keys", {})[provider] = api_key
+        _save_file_config(config)
         return
     subprocess.run(
         ["security", "add-generic-password", "-U", "-s", f"{KEYCHAIN_SERVICE}.{provider}", "-a", os.getenv("USER", "local"), "-w", api_key],
@@ -45,7 +82,7 @@ def _save_keychain_key(provider: str, api_key: str) -> None:
 
 def _keychain_config() -> dict:
     if sys.platform != "darwin":
-        return {}
+        return _file_config().get("settings", {})
     try:
         value = subprocess.run(
             ["security", "find-generic-password", "-s", KEYCHAIN_CONFIG_SERVICE, "-w"],
@@ -58,6 +95,9 @@ def _keychain_config() -> dict:
 
 def _save_keychain_config(config: dict) -> None:
     if sys.platform != "darwin":
+        saved = _file_config()
+        saved["settings"] = config
+        _save_file_config(saved)
         return
     subprocess.run(
         ["security", "add-generic-password", "-U", "-s", KEYCHAIN_CONFIG_SERVICE, "-a", os.getenv("USER", "local"), "-w", json.dumps(config)],

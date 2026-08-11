@@ -3,6 +3,8 @@ from __future__ import annotations
 import io
 import os
 import shutil
+import subprocess
+import sys
 import time
 import uuid
 import zipfile
@@ -79,6 +81,32 @@ class AiConfigRequest(BaseModel):
     base_url: str = "https://api.openai.com/v1"
     model: str = "gpt-image-2"
     api_key: str = ""
+
+
+@app.get("/api/system/select-folder")
+def select_local_folder():
+    if PUBLIC_CLOUD:
+        raise HTTPException(403, "公开云端版不能读取本机文件夹")
+    try:
+        if sys.platform == "darwin":
+            result = subprocess.run(
+                ["osascript", "-e", 'POSIX path of (choose folder with prompt "选择商品根文件夹")'],
+                capture_output=True, text=True,
+            )
+            if result.returncode == 0:
+                return {"path": result.stdout.strip().rstrip("/")}
+            return {"path": ""}
+        import tkinter as tk
+        from tkinter import filedialog
+
+        window = tk.Tk()
+        window.withdraw()
+        window.attributes("-topmost", True)
+        selected = filedialog.askdirectory(title="选择商品根文件夹", mustexist=True)
+        window.destroy()
+        return {"path": selected or ""}
+    except Exception as exc:
+        raise HTTPException(500, f"无法打开系统文件夹选择器：{exc}") from exc
 
 
 def public_job(job: dict) -> dict:
@@ -349,6 +377,6 @@ def download_cloud_export(job_id: str):
 # The public cloud build serves the React workbench and API from one Render
 # service. API routes remain above this mount, while the root URL becomes the
 # shareable application URL and no longer depends on Netlify deployment quota.
-FRONTEND_DIST = Path(os.getenv("FRONTEND_DIST", "/app/dist"))
+FRONTEND_DIST = Path(os.getenv("FRONTEND_DIST", str(Path(__file__).resolve().parent.parent / "dist")))
 if FRONTEND_DIST.exists():
     app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="workbench")
