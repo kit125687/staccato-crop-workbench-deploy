@@ -150,6 +150,56 @@ def _vision_body_pose(path: Path) -> list[dict]:
         return []
 
 
+def _mediapipe_body_pose(image: Image.Image) -> list[dict]:
+    """Detect real human pose landmarks on Linux without an external API."""
+    model_path = Path(os.getenv("POSE_MODEL_PATH", "/app/backend/models/pose_landmarker_lite.task"))
+    if not model_path.is_file():
+        return []
+    try:
+        import mediapipe as mp
+
+        sample = image.copy().convert("RGB")
+        sample.thumbnail((960, 960), Image.Resampling.LANCZOS)
+        options = mp.tasks.vision.PoseLandmarkerOptions(
+            base_options=mp.tasks.BaseOptions(model_asset_path=str(model_path)),
+            running_mode=mp.tasks.vision.RunningMode.IMAGE,
+            num_poses=2,
+            min_pose_detection_confidence=.45,
+            min_pose_presence_confidence=.45,
+        )
+        names = {
+            "nose": 0,
+            "left_shoulder": 11, "right_shoulder": 12,
+            "left_hip": 23, "right_hip": 24,
+            "left_knee": 25, "right_knee": 26,
+            "left_ankle": 27, "right_ankle": 28,
+            "left_heel": 29, "right_heel": 30,
+            "left_foot": 31, "right_foot": 32,
+        }
+        frame = np.ascontiguousarray(np.asarray(sample, dtype=np.uint8))
+        with mp.tasks.vision.PoseLandmarker.create_from_options(options) as detector:
+            result = detector.detect(mp.Image(image_format=mp.ImageFormat.SRGB, data=frame))
+        if not result.pose_landmarks:
+            return []
+        detected = []
+        for label, index in names.items():
+            best = max(
+                (pose[index] for pose in result.pose_landmarks),
+                key=lambda point: float(point.visibility or 0) * float(point.presence or 0),
+            )
+            confidence = min(float(best.visibility or 0), float(best.presence or 0))
+            if confidence >= .30 and -.08 <= best.x <= 1.08 and -.08 <= best.y <= 1.08:
+                detected.append({
+                    "name": label,
+                    "x": round(max(0., min(1., float(best.x))), 4),
+                    "y": round(max(0., min(1., float(best.y))), 4),
+                    "confidence": round(confidence, 3),
+                })
+        return detected
+    except Exception:
+        return []
+
+
 def _background_type(image: Image.Image, box: Box) -> str:
     sample = _downsample(image)
     h, w = sample.shape[:2]
@@ -198,6 +248,8 @@ def analyze_image(path: Path, folder: str) -> ImageItem:
         skin_ratio, top_skin_ratio = _skin_structure(image)
         pose_candidate = skin_ratio < .60 and (top_skin_ratio >= .08 or frame_box.y <= image.height * .14)
         keypoints = _vision_body_pose(path) if pose_candidate else []
+        if not keypoints and os.getenv("ENABLE_LOCAL_POSE", "true").lower() == "true":
+            keypoints = _mediapipe_body_pose(image)
         names = {point["name"] for point in keypoints}
         shoulders = names & {"left_shoulder", "right_shoulder"}
         lower_body = names & {"left_hip", "right_hip", "left_knee", "right_knee", "left_ankle", "right_ankle"}
@@ -213,6 +265,10 @@ def analyze_image(path: Path, folder: str) -> ImageItem:
             image_type = "全身"
             confidence = min(.98, .84 + len(keypoints) * .012)
             reason = "人体关键点已达到肩颈或胸部以上，按全身图处理"
+        elif len(lower_body) >= 2:
+            image_type = "腿模"
+            confidence = min(.97, .82 + len(lower_body) * .018)
+            reason = "检测到真人髋、膝、踝或足部连续姿态，且躯体未达到胸部"
         elif top_skin_ratio >= .20 and skin_ratio < .60:
             image_type = "腿模"
             confidence = min(.94, .76 + top_skin_ratio * .35)

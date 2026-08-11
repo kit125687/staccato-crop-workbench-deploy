@@ -13,7 +13,7 @@ services:
       - key: SCAN_WORKERS
         value: "2"
       - key: IMAGE_AI_CLASSIFICATION
-        value: "true"
+        value: "false"
       - key: IMAGE_ANALYSIS_MODEL
         value: gemini-2.5-flash
       - key: IMAGE_AI_ENABLED

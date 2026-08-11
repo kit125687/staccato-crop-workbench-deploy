@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw
 
-from backend.core import Box, ImageItem, OUTPUT_SIZES, _jpeg_under_limit, _paste_seamless, assign_barcodes, export_items, is_generated_output, render_output, safe_zone, scan_root
+from backend.core import Box, ImageItem, OUTPUT_SIZES, _jpeg_under_limit, _paste_seamless, analyze_image, assign_barcodes, export_items, is_generated_output, render_output, safe_zone, scan_root
 from unittest.mock import patch
 
 
@@ -80,6 +80,31 @@ class CoreTests(unittest.TestCase):
             items, errors = scan_root(root)
             self.assertFalse(errors)
             self.assertNotIn("主体贴近原图边缘", items[0].review_reasons)
+
+    def test_local_pose_marks_lower_body_as_leg_model(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "leg.jpg"
+            Image.new("RGB", (900, 1200), "white").save(path)
+            pose = [
+                {"name": "left_knee", "x": .4, "y": .45, "confidence": .9},
+                {"name": "left_ankle", "x": .4, "y": .8, "confidence": .9},
+                {"name": "left_foot", "x": .5, "y": .86, "confidence": .9},
+            ]
+            with patch("backend.core._vision_body_pose", return_value=[]), patch("backend.core._mediapipe_body_pose", return_value=pose):
+                result = analyze_image(path, "SKU")
+            self.assertEqual(result.image_type, "腿模")
+
+    def test_local_pose_requires_upper_torso_for_full_body(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "full.jpg"
+            Image.new("RGB", (900, 1200), "white").save(path)
+            pose = [
+                {"name": name, "x": .5, "y": y, "confidence": .9}
+                for name, y in (("left_shoulder", .2), ("right_shoulder", .2), ("left_hip", .48), ("left_knee", .7), ("left_ankle", .9))
+            ]
+            with patch("backend.core._vision_body_pose", return_value=[]), patch("backend.core._mediapipe_body_pose", return_value=pose):
+                result = analyze_image(path, "SKU")
+            self.assertEqual(result.image_type, "全身")
 
     def test_clean_extension_feathers_rectangular_boundary(self):
         canvas = Image.new("RGB", (240, 240), (232, 234, 236))
